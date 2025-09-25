@@ -14,6 +14,13 @@ import java.sql.Connection;
 @Configuration
 public class AppLogConfig {
 
+//    @Value("${main.datasource.url}")
+//    private  String jdbcUrl;
+//    @Value("${main.datasource.username}")
+//    private  String user;
+//    @Value("${main.datasource.password}")
+//    private  String pass;
+
     @Value("${app.log.batch-size:200}")
     private int batchSize;
 
@@ -44,7 +51,7 @@ public class AppLogConfig {
         }
 
         // Choose one constructor based on URL
-        final AsyncDbLogger logger = AsyncDbLogger.createDefault();
+        final AsyncDbLogger logger = AsyncDbLogger.createDefault(url,user,pass);
 
         // Optionally override defaults (capacity, batch, interval)
         // If you want to set these, expose a ctor that accepts them, or add setters on AsyncDbLogger.

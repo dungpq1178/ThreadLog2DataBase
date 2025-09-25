@@ -17,4 +17,7 @@
       </entry>
     </moduleSettings>
   </component>
+  <component name="JmixLiquibaseChangesConfig">
+    <exclude-change idName="app_logs" tagName="dropTable" />
+  </component>
 </project>

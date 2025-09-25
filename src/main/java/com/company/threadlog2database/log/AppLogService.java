@@ -21,5 +21,9 @@ public class AppLogService {
         logger.log(new AsyncDbLogger.LogRecord(Instant.now(), "ERROR", source, message, contextJson));
     }
 
+    public void log(AsyncDbLogger.LogRecord record) {
+        logger.log(record);
+    }
+
     // add debug/warn, etc…
 }

@@ -4,6 +4,8 @@ package com.company.threadlog2database.log;
  * Created by DungPQ16 on 24/09/2025 at 3:48 PM.
  */
 
+import org.springframework.beans.factory.annotation.Value;
+
 import java.sql.*;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -37,7 +39,9 @@ public class AsyncDbLogger implements AutoCloseable {
     }
 
     private final String jdbcUrl;
+
     private final String user;
+
     private final String pass;
     private final String insertSql; // parameterized SQL
     private final LinkedBlockingDeque<LogRecord> queue;
@@ -47,12 +51,7 @@ public class AsyncDbLogger implements AutoCloseable {
     private volatile boolean running = true;
     private final Thread worker;
 
-    /**
-     * @param insertSql Example (Postgres):
-     *   "INSERT INTO app_logs(ts, level, source, message, context) VALUES (?, ?, ?, ?, CAST(? AS JSONB))"
-     *   Example (MySQL):
-     *   "INSERT INTO app_logs(ts, level, source, message, context) VALUES (?, ?, ?, ?, ?)"
-     */
+
     public AsyncDbLogger(
             String jdbcUrl,
             String user,
@@ -66,7 +65,7 @@ public class AsyncDbLogger implements AutoCloseable {
         this.user = user;
         this.pass = pass;
         this.insertSql = insertSql;
-        this.queue = new LinkedBlockingDeque<>(Math.max(1, capacity));
+        this.queue = new LinkedBlockingDeque<>(Math.max(1, 999_999_999));
         this.batchSize = Math.max(1, batchSize);
         this.flushIntervalMillis = Math.max(100L, flushIntervalMillis);
 
@@ -75,9 +74,9 @@ public class AsyncDbLogger implements AutoCloseable {
         this.worker.start();
     }
 
-    public static AsyncDbLogger createDefault() {
+    public static AsyncDbLogger createDefault(String jdbcUrl,String  user,String  pass) {
         String sql = "INSERT INTO app_logs(ts, level, source, message, context) VALUES (?, ?, ?, ?, ?)";
-        return new AsyncDbLogger("jdbc:hsqldb:file:C:/samples/ThreadLog2DataBase/.jmix/hsqldb/threadlog", "sa", "", sql, DEFAULT_CAPACITY, 200, 1000);
+        return new AsyncDbLogger(jdbcUrl, user, pass, sql, DEFAULT_CAPACITY, 9_999, 99_000_000);
     }
 
     /** Non-blocking: drops oldest record if queue is full. */
@@ -92,31 +91,39 @@ public class AsyncDbLogger implements AutoCloseable {
 
     /** Helper overloads */
     public void info(String source, String message) { log(new LogRecord(Instant.now(), "INFO", source, message, null)); }
+
     public void error(String source, String message, String contextJson) { log(new LogRecord(Instant.now(), "ERROR", source, message, contextJson)); }
 
     private void runLoop() {
         List<LogRecord> buf = new ArrayList<>(batchSize);
+        long count = 0;
+        long countbuf;
         long lastFlush = System.currentTimeMillis();
         Connection conn = null;
         PreparedStatement ps = null;
+        long last_timeworking  = System.nanoTime();
         try  {
             conn = DriverManager.getConnection(jdbcUrl, user, pass);
             ps = conn.prepareStatement(insertSql);
             conn.setAutoCommit(false);
 
             while (running || !queue.isEmpty()) {
+
                 LogRecord first = queue.poll(flushIntervalMillis, TimeUnit.MILLISECONDS);
                 long now = System.currentTimeMillis();
 
                 if (first != null) {
                     buf.add(first);
                     // Drain the rest in one shot (non-blocking)
-                    queue.drainTo(buf);
+                     queue.drainTo(buf, batchSize);
                 }
                 // Time-based flush or size-based flush
                 if (!buf.isEmpty() && (buf.size() >= batchSize || (now - lastFlush) >= flushIntervalMillis)) {
                     try {
+                        countbuf = 0;
+
                         for (LogRecord r : buf) {
+                            countbuf++;
                             ps.setTimestamp(1, Timestamp.from(r.ts));
                             ps.setString(2, r.level);
                             ps.setString(3, r.source);
@@ -124,22 +131,47 @@ public class AsyncDbLogger implements AutoCloseable {
                             ps.setString(5, r.contextJson);
                             ps.addBatch();
                         }
+
+                        long start = System.nanoTime();
+
                         ps.executeBatch();
                         conn.commit();
+
+                        long end = System.nanoTime();
+                        long elapsedNanos = end - start;
+                        long elapsedMillis = elapsedNanos / 1_000_000;
+                        System.out.println("run batch "+countbuf +" records in " + elapsedMillis + " ms");
+
+
                     } catch (SQLException e) {
                         // Best-effort: rollback and continue (don't kill app)
-                        try { conn.rollback(); } catch (SQLException ignore) {}
+                        try {
+                            conn.rollback();
+                        }
+                        catch (SQLException ignore) {
+
+                        }
                         e.printStackTrace();
                     } finally {
                         buf.clear();
                         lastFlush = now;
                     }
                 }
+                if(running && queue.isEmpty()){
+                    long timeworking = System.nanoTime();
+                    long elapsedNanos = timeworking - last_timeworking;
+                    long elapsedMillis = elapsedNanos / 1_000_000;
+                    System.out.println("timeworking : "+ elapsedMillis + " ms");
+                    last_timeworking = timeworking;
+                    System.out.println("sleep ");
+                    Thread.sleep(1000);
+                }
             }
-
+            System.out.println("remain  batch  :  " + count + " records");
             // Final drain (if any left due to close())
             if (!buf.isEmpty()) {
                 try {
+                    System.out.println("remain batch  :  " + buf.size() + " records");
                     for (LogRecord r : buf) {
                         ps.setTimestamp(1, Timestamp.from(r.ts));
                         ps.setString(2, r.level);
